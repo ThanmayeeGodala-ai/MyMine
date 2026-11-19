@@ -10,8 +10,20 @@ const app = express()
 const PORT = process.env.PORT || 5000
 
 // CORS CONFIGURATION
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'https://probable-cod-g4wrjrw74xvpfr7q-5173.app.github.dev'
+].filter(Boolean)
+
 app.use(cors({
-  origin: 'https://probable-cod-g4wrjrw74xvpfr7q-5173.app.github.dev',
+  origin: function (origin, callback) {
+    // Allow requests without an origin (health checks, server tools)
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true)
+    }
+
+    return callback(new Error('Not allowed by CORS'))
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }))
@@ -36,19 +48,21 @@ async function authenticateUser(req, res, next) {
     }
 
     const token = authHeader.split(' ')[1]
+
     const { data, error } = await supabase.auth.getUser(token)
 
     if (error || !data.user) {
       return res.status(401).json({
-        message: 'Invalid or expired login session'
+        message: 'Invalid or expired session'
       })
     }
 
     req.user = data.user
     next()
   } catch (error) {
-    console.error('Authentication error:', error.message)
-    res.status(401).json({
+    console.error('Authentication error:', error)
+
+    return res.status(401).json({
       message: 'Authentication failed'
     })
   }
@@ -65,57 +79,19 @@ app.get('/db-test', async (req, res) => {
     const result = await pool.query('SELECT NOW()')
 
     res.json({
-      message: 'MyMine database connected successfully! ♡',
+      message: 'Database connected successfully!',
       time: result.rows[0].now
     })
   } catch (error) {
-    console.error('Database error:', error.message)
+    console.error('Database error:', error)
+
     res.status(500).json({
       message: 'Database connection failed'
     })
   }
 })
 
-// CREATE DIARY ENTRY
-app.post('/diary', authenticateUser, async (req, res) => {
-  try {
-    const { title, content, mood, entry_date } = req.body
-    const photos = req.body.photos ?? []
-
-    if (!Array.isArray(photos)) {
-      return res.status(400).json({
-        message: 'Photos must be an array'
-      })
-    }
-
-    const result = await pool.query(
-      `INSERT INTO diary_entries
-       (user_id, title, content, mood, entry_date, photos)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-       RETURNING *`,
-      [
-        req.user.id,
-        title,
-        content,
-        mood,
-        entry_date,
-        JSON.stringify(photos)
-      ]
-    )
-
-    res.status(201).json({
-      message: 'Diary entry saved successfully! ♡',
-      entry: result.rows[0]
-    })
-  } catch (error) {
-    console.error('Diary save error:', error.message)
-    res.status(500).json({
-      message: 'Could not save diary entry'
-    })
-  }
-})
-
-// GET USER'S DIARY ENTRIES
+// GET DIARY ENTRIES
 app.get('/diary', authenticateUser, async (req, res) => {
   try {
     const result = await pool.query(
@@ -127,9 +103,40 @@ app.get('/diary', authenticateUser, async (req, res) => {
 
     res.json(result.rows)
   } catch (error) {
-    console.error('Diary fetch error:', error.message)
+    console.error('Fetch diary error:', error)
+
     res.status(500).json({
-      message: 'Could not fetch diary entries'
+      message: 'Failed to fetch diary entries'
+    })
+  }
+})
+
+// CREATE DIARY ENTRY
+app.post('/diary', authenticateUser, async (req, res) => {
+  try {
+    const { title, content, mood, entry_date, photos } = req.body
+
+    const result = await pool.query(
+      `INSERT INTO diary_entries
+       (user_id, title, content, mood, entry_date, photos)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [
+        req.user.id,
+        title,
+        content,
+        mood,
+        entry_date,
+        JSON.stringify(photos || [])
+      ]
+    )
+
+    res.status(201).json(result.rows[0])
+  } catch (error) {
+    console.error('Create diary error:', error)
+
+    res.status(500).json({
+      message: 'Failed to save diary entry'
     })
   }
 })
@@ -137,15 +144,7 @@ app.get('/diary', authenticateUser, async (req, res) => {
 // UPDATE DIARY ENTRY
 app.put('/diary/:id', authenticateUser, async (req, res) => {
   try {
-    const { title, content, mood, entry_date } = req.body
-    const photos = req.body.photos ?? []
-    const { id } = req.params
-
-    if (!Array.isArray(photos)) {
-      return res.status(400).json({
-        message: 'Photos must be an array'
-      })
-    }
+    const { title, content, mood, entry_date, photos } = req.body
 
     const result = await pool.query(
       `UPDATE diary_entries
@@ -153,7 +152,7 @@ app.put('/diary/:id', authenticateUser, async (req, res) => {
            content = $2,
            mood = $3,
            entry_date = $4,
-           photos = $5::jsonb,
+           photos = $5,
            updated_at = NOW()
        WHERE id = $6 AND user_id = $7
        RETURNING *`,
@@ -162,8 +161,8 @@ app.put('/diary/:id', authenticateUser, async (req, res) => {
         content,
         mood,
         entry_date,
-        JSON.stringify(photos),
-        id,
+        JSON.stringify(photos || []),
+        req.params.id,
         req.user.id
       ]
     )
@@ -174,14 +173,12 @@ app.put('/diary/:id', authenticateUser, async (req, res) => {
       })
     }
 
-    res.json({
-      message: 'Diary entry updated successfully! ♡',
-      entry: result.rows[0]
-    })
+    res.json(result.rows[0])
   } catch (error) {
-    console.error('Diary update error:', error.message)
+    console.error('Update diary error:', error)
+
     res.status(500).json({
-      message: 'Could not update diary entry'
+      message: 'Failed to update diary entry'
     })
   }
 })
@@ -189,13 +186,11 @@ app.put('/diary/:id', authenticateUser, async (req, res) => {
 // DELETE DIARY ENTRY
 app.delete('/diary/:id', authenticateUser, async (req, res) => {
   try {
-    const { id } = req.params
-
     const result = await pool.query(
       `DELETE FROM diary_entries
        WHERE id = $1 AND user_id = $2
        RETURNING *`,
-      [id, req.user.id]
+      [req.params.id, req.user.id]
     )
 
     if (result.rows.length === 0) {
@@ -205,12 +200,13 @@ app.delete('/diary/:id', authenticateUser, async (req, res) => {
     }
 
     res.json({
-      message: 'Diary entry deleted successfully! ♡'
+      message: 'Diary entry deleted successfully'
     })
   } catch (error) {
-    console.error('Diary delete error:', error.message)
+    console.error('Delete diary error:', error)
+
     res.status(500).json({
-      message: 'Could not delete diary entry'
+      message: 'Failed to delete diary entry'
     })
   }
 })

@@ -12,16 +12,17 @@ const PORT = process.env.PORT || 5000
 // CORS CONFIGURATION
 const allowedOrigins = [
   process.env.FRONTEND_URL,
+  'https://my-mine-two.vercel.app',
   'https://probable-cod-g4wrjrw74xvpfr7q-5173.app.github.dev'
 ].filter(Boolean)
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests without an origin (health checks, server tools)
     if (!origin || allowedOrigins.includes(origin)) {
       return callback(null, true)
     }
 
+    console.error('Blocked by CORS:', origin)
     return callback(new Error('Not allowed by CORS'))
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
